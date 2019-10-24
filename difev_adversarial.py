@@ -101,7 +101,7 @@ def callback(x, convergence):
         print('Prob [%s]: %f, %d iterations' %(class_names[difev_vars.pred_orig], difev_vars.prob_adv[difev_vars.pred_orig],difev_vars.stage))
 
 
-class OnePixelAttack:
+class PixelAttack:
     """
     Use differential evolution to modify a small number of pixels (self.d pixels)
     """
@@ -129,8 +129,8 @@ class ColorAttack:
     Change the color balance and try to defeat the classifier
     """
     def __init__(self): 
-        #v = (0.42,0.58)
-        v = (0.47,0.53)
+        #v = (0.47,0.53)
+        v = (0.9,1.1)
         self.bounds = [v,v,v] 
         self.name = 'color'
 
@@ -141,6 +141,7 @@ class ColorAttack:
 
         # calculate pixel locations and values
         adv_image = adv_image * x 
+        adv_image[adv_image>255] = 255
         adv_image = Image.fromarray(adv_image.astype('uint8'))
         return adv_image
 
@@ -187,7 +188,8 @@ def run_attack(attack,img_path,filename,target,fig_path,save=True):
     import warnings
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore",category=UserWarning)
-        result = differential_evolution(optimize, attack.bounds, maxiter=iters, popsize=popsize, tol=1e-5, callback=callback,workers=-1)
+        result = differential_evolution(optimize, attack.bounds, maxiter=iters, popsize=popsize, tol=1e-5, callback=callback,workers=5)
+        #result = differential_evolution(optimize, attack.bounds, maxiter=iters, popsize=popsize, tol=1e-5, callback=callback)
     adv_image = difev_vars.perturb_fn(result.x)
     trans_adv_image = loader2(adv_image).repeat(1,1,1,1)
     out = difev_vars.model(trans_adv_image)
@@ -206,7 +208,7 @@ def run_attack(attack,img_path,filename,target,fig_path,save=True):
         difev_vars.image.save(name_image,'jpeg')
         if attack.name == 'pixel':
             name_diff = fig_path+base_name+'_diff' +'.jpg'     
-            diff = PIL.ImageChops.difference(adv_image,image)
+            diff = PIL.ImageChops.difference(adv_image,difev_vars.image)
             diff.save(name_diff)
         
         #difev_vars.image.show()
@@ -224,8 +226,10 @@ def attack_all():
     """
     import os
     from shutil import copyfile
+    attack = PixelAttack()
+    attack.d=3
     #attack = ColorAttack()
-    attack = RotationTranslationAttack()
+    #attack = RotationTranslationAttack()
     target = 'nevus'
     #load model to attackk
     difev_vars.model,_ = classify.initialize_model('inception', num_classes=2, feature_extract=False, use_pretrained=False,load=True)
@@ -249,11 +253,57 @@ def attack_all():
         if os.path.exists(results_path+'results.pkl'):
             copyfile(results_path+'results.pkl',results_path+'results.old')
         pickle.dump(results,open(results_path+'results.pkl','wb'))
-        
 
 
+def edit_results():
+    assert False
+    results_path = '/data/figs/lesions-adversarial/difev/'
+    results = pickle.load(open(results_path + 'results.pkl','rb'))
+    new = {}
+    for k,v in results.items():
+        if k.find('color') == -1: new[k] = v 
+
+    pickle.dump(new,open(results_path+'results.pkl','wb'))
+       
 
 
+def plot_results():
+    import math
+    results_path = '/data/figs/lesions-adversarial/difev/'
+    #results_path = '/data/figs/lesions-adversarial/fgsm/'
+    results = pickle.load(open(results_path + 'results.temp.pkl','rb'))
+    
+    #select = 'color'
+    #select = 'rotation'
+    #select = 'fgsm' 
+    select = 'pixel' 
+    
+    heatmap = np.zeros((10,10))
+    def bin(a): return min(math.floor(a*heatmap.shape[0]), heatmap.shape[0]-1)
+
+    for k,v in results.items():
+        if k.find(select)!=-1: 
+            if v['outcome'] in ['success','failed']: 
+                x=v['orig']
+                y=v['adv']
+                heatmap[bin(x),bin(y)] += 1.0
+    
+    import pylab as pl
+    #input_img = np.asarray(input_img).copy()
+    heatmap = np.log10(heatmap)
+    heatmap[heatmap==-np.inf] = 0
+    print(heatmap)
+    import matplotlib.colors as mcolors
+    cmap = mcolors.LinearSegmentedColormap.from_list('my',[(0.0,0.0,0.0),(1.0,0.0,0.0)])
+    pl.pcolor(heatmap,cmap=cmap)
+    pl.colorbar()
+    #pl.axis('off')
+    pl.gca().set_aspect('equal', adjustable='box')
+    labels = '0.0,0.2,0.4,0.6,0.8,1.0'.split(',')
+    pl.gca().set_xticklabels(labels, minor=False)
+    pl.gca().set_yticklabels(labels, minor=False)
+    pl.savefig('/data/figs/lesions-adversarial/difev/'+select+'.eps')
+    pl.show()
 
 
 
@@ -261,7 +311,9 @@ def attack_all():
 #run_attack(RotationTranslationAttack(),save=False)
 #rotation_attack(save=True)
 
-attack_all()
+#attack_all()
+#edit_results()
+plot_results()
 
 
 
